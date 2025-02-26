@@ -25,12 +25,13 @@ def download_librispeech_data():
     print(f"Downloaded LibriSpeech dataset to: {TALAPAS_STORAGE_PATH}")
     return dataset
 
-#Custom Dataset Class for Audio Data
+# Custom Dataset Class for Audio Data
 class LibriSpeechDataset(Dataset):
     """Custom Dataset for loading LibriSpeech audio files with Librosa."""
     def __init__(self, dataset, max_len=None):
         self.dataset = dataset  # Hugging Face dataset object
         self.audio_files = [sample["file"] for sample in dataset]  # List of audio file paths
+        self.texts = [sample["text"] for sample in dataset]  # List of transcriptions
         self.max_len = max_len  # Maximum length of audio sequences, if specified
 
     def __len__(self):
@@ -41,17 +42,10 @@ class LibriSpeechDataset(Dataset):
         audio_path = self.audio_files[idx]
         y, sr = librosa.load(audio_path, sr=16000)  # LibriSpeech is typically 16kHz
         
-        """
-        if self.max_len:
-            if len(y) < self.max_len:
-                y = np.pad(y, (0, self.max_len - len(y)), mode="constant")
-            else:
-                y = y[:self.max_len]
-        """
+        # Get the corresponding transcription
+        text = self.texts[idx]
         
-        #spectrogram = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128)
-        #spectrogram = torch.tensor(spectrogram, dtype=torch.float32)
-        return y, sr  # Return the waveform (y) and sample rate (sr)
+        return y, sr, text  # Return the waveform (y), sample rate (sr), and transcription (text)
 
 # DataLoader
 def setup_dataloader(dataset, batch_size=32, max_len=None):
@@ -67,21 +61,27 @@ def collate_fn(batch):
     max_len = max(audio_lengths)
     
     padded_audio = []
-    for audio, sr in batch:
+    texts = []
+    for audio, sr, text in batch:
         padding = max_len - len(audio)
         padded_audio.append(F.pad(torch.tensor(audio), (0, padding), mode="constant"))
+        texts.append(text)  # Collect the transcriptions
     
-    return torch.stack(padded_audio), sr  # Return the padded audio and sample rate
+    return torch.stack(padded_audio), sr, texts  # Return padded audio, sample rate, and transcriptions
 
 # Visualize the First Audio Sample's Waveform and Spectrogram
-def visualize_waveform_and_spectrogram(y, sr=16000):
-    """Visualize the waveform and Mel spectrogram of the audio."""
+def visualize_waveform_and_spectrogram(y, sr=16000, text=None):
+    """Visualize the waveform and Mel spectrogram of the audio, and print the transcription."""
     
-    # Trim audio for purposes of vis
+    # Trim audio for purposes of visualization
     y_trimmed, _ = librosa.effects.trim(y, top_db=20)  # top_db sets the threshold for silence
     y = y_trimmed
     duration = librosa.get_duration(y=y, sr=sr)
     print(f"Audio duration: {duration} seconds")
+    
+    # Print the real transcription if provided
+    if text:
+        print(f"Transcription: {text}")
     
     display(aud(y, rate=sr))  # Play the audio in the notebook
     
@@ -97,15 +97,14 @@ def visualize_waveform_and_spectrogram(y, sr=16000):
     S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=8_000)
     S_dB = librosa.power_to_db(S, ref=np.max)
 
-    # spectrogram
+    # Spectrogram
     plt.figure(figsize=(12, 6))
     librosa.display.specshow(S_dB, x_axis="time", y_axis="mel", sr=sr, fmax=8_000)
     plt.colorbar(format="%+2.0f dB")
     plt.title("Mel Spectrogram")
     plt.show()
 
-# Main execution for project milestone 
-#Normal usage will return data loaders
+# Main execution for project milestone
 if __name__ == "__main__":
     # Download the dataset
     librispeech_dataset = download_librispeech_data()
@@ -113,17 +112,11 @@ if __name__ == "__main__":
     batch_size = 64 
     max_len = 16000
     dataloader = setup_dataloader(librispeech_dataset, batch_size=batch_size, max_len=max_len)
-    for i, (audio, sr) in enumerate(dataloader):
+    for i, (audio, sr, texts) in enumerate(dataloader):
         if i == 0:
             first_sample = audio[0].numpy()  # Get the first sample's audio data
-            visualize_waveform_and_spectrogram(first_sample, sr)  # Visualize the waveform and spectrogram
+            first_text = texts[0]  # Get the first sample's transcription
+            visualize_waveform_and_spectrogram(first_sample, sr, text=first_text)  # Visualize and print text
             break
     
-    """
-    for i, (y, sr) in enumerate(librispeech_dataset['file']):
-        if i == 0:  # Limit to the first batch
-            # Visualize the first sample's waveform and spectrogram
-            visualize_waveform_and_spectrogram(y[0].numpy(), sr.item())  # Convert tensor to numpy for librosa
-            break
-    """
     print("Visualization complete!")
