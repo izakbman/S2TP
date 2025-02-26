@@ -1,64 +1,129 @@
 import os
-from huggingface_hub import hf_hub_download
 import librosa
-import numpy as np
+import librosa.display
 import torch
+import torch.nn.functional as F
+from datasets import load_dataset
 from torch.utils.data import Dataset, DataLoader
+import numpy as np
+import matplotlib.pyplot as plt
+from IPython.display import Audio as aud  # To play audio in the notebook
 
-# Set storage path on Talapas (adjust to your preferred directory)
-TALAPAS_STORAGE_PATH = "/scratch/username/librosa_data"  # Replace 'username' with your Talapas username
+# Set storage path on Talapas (currently local)
+TALAPAS_STORAGE_PATH = "local_data"  
 os.makedirs(TALAPAS_STORAGE_PATH, exist_ok=True)
 
-# Step 1: Download the Librosa example audio file from Hugging Face
-def download_librosa_data():
-    """Download the small Librosa example file from Hugging Face."""
-    file_path = hf_hub_download(
-        repo_id="librosa/example",
-        filename="nutcracker.mp3",  # Example file; adjust if targeting a different one
-        repo_type="dataset",
+# LibriSpeech ASR dummy dataset from Hugging Face
+def download_librispeech_data():
+    """Download the LibriSpeech ASR dummy dataset from Hugging Face."""
+    dataset = load_dataset(
+        "patrickvonplaten/librispeech_asr_dummy",
+        "clean",
+        split="validation",
         cache_dir=TALAPAS_STORAGE_PATH
     )
-    print(f"Downloaded Librosa example to: {file_path}")
-    return file_path
+    print(f"Downloaded LibriSpeech dataset to: {TALAPAS_STORAGE_PATH}")
+    return dataset
 
-# Step 2: Custom Dataset Class for Audio Data
-class AudioDataset(Dataset):
-    """Custom Dataset for loading audio files with Librosa."""
-    def __init__(self, audio_file):
-        # Load audio file with Librosa
-        self.y, self.sr = librosa.load(audio_file, sr=22050)  # y = audio time series, sr = sample rate
-        # Convert to spectrogram (example preprocessing)
-        self.spectrogram = librosa.feature.melspectrogram(y=self.y, sr=self.sr)
-        self.data = torch.tensor(self.spectrogram, dtype=torch.float32)
+#Custom Dataset Class for Audio Data
+class LibriSpeechDataset(Dataset):
+    """Custom Dataset for loading LibriSpeech audio files with Librosa."""
+    def __init__(self, dataset, max_len=None):
+        self.dataset = dataset  # Hugging Face dataset object
+        self.audio_files = [sample["file"] for sample in dataset]  # List of audio file paths
+        self.max_len = max_len  # Maximum length of audio sequences, if specified
 
     def __len__(self):
-        # Define length as number of time frames in spectrogram
-        return self.data.shape[1]
+        return len(self.audio_files)
 
     def __getitem__(self, idx):
-        # Return a single time frame of the spectrogram
-        return self.data[:, idx]
+        # Load audio file with Librosa
+        audio_path = self.audio_files[idx]
+        y, sr = librosa.load(audio_path, sr=16000)  # LibriSpeech is typically 16kHz
+        
+        """
+        if self.max_len:
+            if len(y) < self.max_len:
+                y = np.pad(y, (0, self.max_len - len(y)), mode="constant")
+            else:
+                y = y[:self.max_len]
+        """
+        
+        #spectrogram = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128)
+        #spectrogram = torch.tensor(spectrogram, dtype=torch.float32)
+        return y, sr  # Return the waveform (y) and sample rate (sr)
 
-# Step 3: Set Up DataLoader
-def setup_dataloader(audio_file, batch_size=32):
-    """Create a DataLoader for the audio dataset."""
-    dataset = AudioDataset(audio_file)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+# DataLoader
+def setup_dataloader(dataset, batch_size=32, max_len=None):
+    """Create a DataLoader for the LibriSpeech dataset."""
+    custom_dataset = LibriSpeechDataset(dataset, max_len=max_len)
+    dataloader = DataLoader(custom_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
     return dataloader
 
-# Main execution
+# Collate function to handle variable-length sequences in the DataLoader
+def collate_fn(batch):
+    # Pad sequences to the same length
+    audio_lengths = [len(item[0]) for item in batch]
+    max_len = max(audio_lengths)
+    
+    padded_audio = []
+    for audio, sr in batch:
+        padding = max_len - len(audio)
+        padded_audio.append(F.pad(torch.tensor(audio), (0, padding), mode="constant"))
+    
+    return torch.stack(padded_audio), sr  # Return the padded audio and sample rate
+
+# Visualize the First Audio Sample's Waveform and Spectrogram
+def visualize_waveform_and_spectrogram(y, sr=16000):
+    """Visualize the waveform and Mel spectrogram of the audio."""
+    
+    # Trim audio for purposes of vis
+    y_trimmed, _ = librosa.effects.trim(y, top_db=20)  # top_db sets the threshold for silence
+    y = y_trimmed
+    duration = librosa.get_duration(y=y, sr=sr)
+    print(f"Audio duration: {duration} seconds")
+    
+    display(aud(y, rate=sr))  # Play the audio in the notebook
+    
+    # Plot the waveform
+    plt.figure(figsize=(12, 4))
+    librosa.display.waveshow(y, sr=sr)
+    plt.title("Waveform")
+    plt.xlabel("Time (s)")
+    plt.ylabel("Amplitude")
+    plt.show()
+
+    # Mel spectrogram
+    S = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=8_000)
+    S_dB = librosa.power_to_db(S, ref=np.max)
+
+    # spectrogram
+    plt.figure(figsize=(12, 6))
+    librosa.display.specshow(S_dB, x_axis="time", y_axis="mel", sr=sr, fmax=8_000)
+    plt.colorbar(format="%+2.0f dB")
+    plt.title("Mel Spectrogram")
+    plt.show()
+
+# Main execution for project milestone 
+#Normal usage will return data loaders
 if __name__ == "__main__":
-    # Download the data
-    audio_file = download_librosa_data()
+    # Download the dataset
+    librispeech_dataset = download_librispeech_data()
 
-    # Set up the DataLoader
-    batch_size = 32  # Adjust as needed
-    dataloader = setup_dataloader(audio_file, batch_size=batch_size)
-
-    # Example: Iterate through the DataLoader
-    for i, batch in enumerate(dataloader):
-        print(f"Batch {i+1} shape: {batch.shape}")
-        if i == 2:  # Limit to 3 batches for demo
+    batch_size = 64 
+    max_len = 16000
+    dataloader = setup_dataloader(librispeech_dataset, batch_size=batch_size, max_len=max_len)
+    for i, (audio, sr) in enumerate(dataloader):
+        if i == 0:
+            first_sample = audio[0].numpy()  # Get the first sample's audio data
+            visualize_waveform_and_spectrogram(first_sample, sr)  # Visualize the waveform and spectrogram
             break
-
-    print("Data loading complete!")
+    
+    """
+    for i, (y, sr) in enumerate(librispeech_dataset['file']):
+        if i == 0:  # Limit to the first batch
+            # Visualize the first sample's waveform and spectrogram
+            visualize_waveform_and_spectrogram(y[0].numpy(), sr.item())  # Convert tensor to numpy for librosa
+            break
+    """
+    print("Visualization complete!")
