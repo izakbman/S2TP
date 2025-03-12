@@ -22,13 +22,14 @@ def get_storage_path(use_talapas=False, talapas_base="/home/iboardma/projdir/S2T
     return storage_path
 
 # Load Wav2Vec2 processor (global)
+# Processor conbines a pretrained feature extractor and tokenizer with an attention mechanisism
 processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
 
 # Download and split LibriSpeech dataset
 def download_and_split_librispeech_data(storage_path="local_data"):
     """Download and split the LibriSpeech dataset into train, validation, and test."""
     dataset = load_dataset("hf-internal-testing/librispeech_asr_demo", "clean", split="validation", trust_remote_code=True)
-    dataset = dataset.shuffle(seed=42)  # Shuffle the dataset
+    #dataset = dataset.shuffle(seed=42)  # Shuffle the dataset
     
     train_size = int(0.8 * len(dataset))
     valid_size = int(0.1 * len(dataset))
@@ -44,13 +45,15 @@ def download_and_split_librispeech_data(storage_path="local_data"):
 def preprocess_audio(example):
     audio = example["audio"]["array"]
     # Process the audio input using the processor, padding to the longest sequence in the batch
-    inputs = processor(audio, return_tensors="pt", padding="longest")
+    inputs = processor(audio, return_tensors="pt", padding="longest", sampling_rate = 16000)
     input_values = inputs.input_values.squeeze(0)
     
     # Tokenize the text labels
     labels = processor.tokenizer(example["text"], return_tensors="pt", padding="longest")
     label_ids = labels.input_ids.squeeze(0)
-    
+    #print(f"First Encoded Label: {label_ids[0]}")
+    #decoded_first = processor.tokenizer.decode(label_ids, skip_special_tokens=True)
+   # print(decoded_first)
     return {"input_values": input_values, "labels": label_ids}
 
 # Function to visualize waveform and spectrogram
