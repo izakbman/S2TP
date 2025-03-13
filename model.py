@@ -1,102 +1,130 @@
-from transformers import AutoProcessor, Wav2Vec2BertForCTC
-from datasets import load_dataset
 import torch
-import torch
-from torch.utils.data import Dataset, DataLoader
+import torch.nn as nn
+import numpy as np
 import os
+import pickle
+from transformers import Wav2Vec2Processor
+from torch.utils.data import DataLoader
+from jiwer import wer, cer
+from tqdm import tqdm
 
-#dataset = load_dataset("hf-internal-testing/librispeech_asr_demo", "clean", split="validation", trust_remote_code=True)
-#dataset = dataset.sort("id")
-#sampling_rate = dataset.features["audio"].sampling_rate
-
-#processor = AutoProcessor.from_pretrained("hf-audio/wav2vec2-bert-CV16-en")
-#model = Wav2Vec2BertForCTC.from_pretrained("hf-audio/wav2vec2-bert-CV16-en")
-
-# audio file is decoded on the fly
-#inputs = processor(dataset[0]["audio"]["array"], sampling_rate=sampling_rate, return_tensors="pt")
-
-class MyDataset(Dataset):
-    def __init__(self, input_data, labels, device='cuda'):
-        """
-        Args:
-            input_data (torch.Tensor): Tensor of input features (X_train, X_test, etc.)
-            labels (torch.Tensor): Tensor of corresponding labels
-            device (str): The device to load data on, default is 'cuda'
-        """
-        self.input_data = input_data
-        self.labels = labels
-        self.device = device
-
-    def __len__(self):
-        """Returns the size of the dataset"""
-        return len(self.input_data)
-
-    def __getitem__(self, idx):
-        """Fetches a single sample and moves to the specified device"""
-        input_value = self.input_data[idx].to(self.device)
-        label = self.labels[idx].to(self.device)
-        print(f"Data loaded in dataloaders on device: {self.device}")
-        return input_value, label
-
-# Function to load the .pt files
-def load_tensor_data(file_path):
-    """
-    Load tensor data from a .pt file.
-    """
-    if os.path.exists(file_path):
-        return torch.load(file_path, weights_only = True)
-    else:
-        raise FileNotFoundError(f"File not found: {file_path}")
-
-
-# Loading tensors from .pt files
-X_train = load_tensor_data("librispeech_cache/X_train.pt")
-y_train = load_tensor_data("librispeech_cache/y_train.pt")
-X_test = load_tensor_data("librispeech_cache/X_test.pt")
-y_test = load_tensor_data("librispeech_cache/y_test.pt")
-X_valid = load_tensor_data("librispeech_cache/X_valid.pt")
-y_valid = load_tensor_data("librispeech_cache/y_valid.pt")
-
-# Choose device (GPU if available, otherwise CPU)
+# Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Create Dataset objects
-train_dataset = MyDataset(X_train, y_train, device=device)
-test_dataset = MyDataset(X_test, y_test, device=device)
-valid_dataset = MyDataset(X_valid, y_valid, device=device)
+# Load pretrained processor
+processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
 
-# Create DataLoader objects
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
-valid_loader = DataLoader(valid_dataset, batch_size=32, shuffle=False)
+# Load saved raw data from pickle files
+def load_data(file_path):
+    """Load raw audio arrays and labels from pickle files."""
+    with open(file_path, "rb") as f:
+        return pickle.load(f)
 
+# Load datasets
+storage_path = "librispeech_cache"
+train_data = load_data(os.path.join(storage_path, "train_data.pkl"))
+test_data = load_data(os.path.join(storage_path, "test_data.pkl"))
 
-if __name__ == "__main__":
-# Example of iterating through the DataLoader
+# Preprocess all data into lists of tensors
+def preprocess_data(data, processor, sampling_rate=16000):
+    input_values_list = []
+    labels_list = []
+    for audio_array, text in data:
+        audio_array = audio_array.astype(np.float32)
+        inputs = processor(audio_array, sampling_rate=sampling_rate, return_tensors="pt", padding=False).input_values.squeeze(0)
+        labels = processor.tokenizer(text, return_tensors="pt", padding=False).input_ids.squeeze(0)  # Tokenized IDs
+        
+        input_values_list.append(inputs)
+        labels_list.append(labels)
+    return input_values_list, labels_list
+
+# Process train and test data
+train_inputs, train_labels = preprocess_data(train_data, processor)
+test_inputs, test_labels = preprocess_data(test_data, processor)
+
+# Very basic custom model for CTC
+class BasicCTCModel(nn.Module):
+    def __init__(self, vocab_size=32, feature_dim=128):
+        super(BasicCTCModel, self).__init__()
+        self.feature_extractor = nn.Sequential(
+            nn.Conv1d(1, feature_dim, kernel_size=10, stride=5, padding=3),
+            nn.ReLU()
+        )
+        self.fc = nn.Linear(feature_dim, vocab_size)
+    
+    def forward(self, input_values, labels=None):
+        input_values = input_values.unsqueeze(1)  # [batch_size, 1, sequence_length]
+        features = self.feature_extractor(input_values)  # [batch_size, feature_dim, reduced_length]
+        features = features.transpose(1, 2)  # [batch_size, reduced_length, feature_dim]
+        logits = self.fc(features)  # [batch_size, reduced_length, vocab_size]
+        
+        if labels is not None:
+            input_lengths = torch.full((input_values.size(0),), logits.size(1), dtype=torch.long, device=device)
+            label_lengths = torch.tensor([len(l) for l in labels], dtype=torch.long, device=device)
+            loss = nn.CTCLoss(blank=0)(logits.transpose(0, 1), labels, input_lengths, label_lengths)
+            return {"loss": loss, "logits": logits}
+        return {"logits": logits}
+
+# Custom collate function to pad and move to device
+def custom_collate_fn(batch):
+    """Pad inputs and labels, ensuring labels remain tokenized tensors."""
+    inputs, labels = zip(*batch)
+    inputs_padded = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=0.0).to(device)
+    labels_padded = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=processor.tokenizer.pad_token_id).to(device)
+    return inputs_padded, labels_padded
+
+# Create datasets and dataloaders
+train_dataset = list(zip(train_inputs, train_labels))
+test_dataset = list(zip(test_inputs, test_labels))
+
+batch_size = 4
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate_fn)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=custom_collate_fn)
+
+# Initialize basic model
+model = BasicCTCModel(vocab_size=processor.tokenizer.vocab_size).to(device)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+
+# Training loop
+num_epochs = 20
+model.train()
+for epoch in tqdm(range(num_epochs)):
+    total_loss = 0
     for inputs, labels in train_loader:
-        # Inputs and labels are already on the GPU
-        print(inputs.shape, labels.shape)  # Process the data, for example, by passing it through a model
-        break  # Just show the first batch
+        optimizer.zero_grad()
+        outputs = model(inputs, labels=labels)
+        loss = outputs["loss"]
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+    print(f"Epoch {epoch+1}/{num_epochs}, Average Loss: {total_loss / len(train_loader):.4f}")
 
+# Evaluation on full test set
+model.eval()
+all_predicted_ids = []
+all_actual_transcriptions = []
 
-"""
-
-X_train = torch.load
-print(inputs)
 with torch.no_grad():
-    logits = model(**inputs).logits
-predicted_ids = torch.argmax(logits, dim=-1)
+    for inputs, labels in test_loader:
+        outputs = model(inputs)
+        logits = outputs["logits"]
+        predicted_ids = torch.argmax(logits, dim=-1)
+        all_predicted_ids.extend(predicted_ids.cpu().tolist())  # Move to CPU for decoding
+        all_actual_transcriptions.extend(processor.batch_decode(labels))
 
-# transcribe speech
-transcription = processor.batch_decode(predicted_ids)
-transcription[0]
+# Decode predictions
+all_predicted_transcriptions = processor.batch_decode(all_predicted_ids)
 
+# Calculate CER and WER
+cer_score = cer(all_actual_transcriptions, all_predicted_transcriptions)
+wer_score = wer(all_actual_transcriptions, all_predicted_transcriptions)
 
+# Print results
+print(f"\nCharacter Error Rate (CER): {cer_score:.4f}")
+print(f"Word Error Rate (WER): {wer_score:.4f}")
 
-inputs["labels"] = processor(text=dataset[0]["text"], return_tensors="pt").input_ids
-
-# compute loss
-loss = model(**inputs).loss
-round(loss.item(), 2)
-
-"""
+# Print sample transcriptions
+print("\nSample transcriptions (first 5):")
+for i in range(min(5, len(all_actual_transcriptions))):
+    print(f"Actual: {all_actual_transcriptions[i]}")
+    print(f"Predicted: {all_predicted_transcriptions[i]}\n")
