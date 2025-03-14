@@ -22,32 +22,37 @@ def get_storage_path(use_talapas=False, talapas_base="/home/iboardma/projdir/S2T
     return storage_path
 
 def download_and_process_librispeech(storage_path):
-    """Download the dummy LibriSpeech validation split and process into train/valid/test."""
-    print("Downloading dummy LibriSpeech validation split...")
-    dataset = load_dataset("patrickvonplaten/librispeech_asr_dummy", "clean", split="validation")
+    """Download the LibriSpeech 'validation' split and manually split it into 80-10-10 train/valid/test."""
+    print("Downloading LibriSpeech validation split and creating train, test, valid subsets...")
     
-    # Process the validation split (4 samples)
+    # Download the 'validation' split only
+    dataset = load_dataset("librispeech_asr", "clean", split="validation", streaming=True)
+    
     processed_data = []
-    print(f"Processing validation split with {len(dataset)} samples...")
+    
+    # Process and collect all samples
     for item in dataset:
-        audio_path = item["file"]
-        audio_array, sr = librosa.load(audio_path, sr=16000)
+        audio = item["audio"]["array"]
         text = item["text"]
-        processed_data.append((audio_array, text))
+        processed_data.append((audio, text))
     
-    # Manually split 4 samples: 2 train, 1 valid, 1 test
-    train_data = processed_data[:2]  # First 2 samples
-    valid_data = processed_data[2:3]  # 3rd sample
-    test_data = processed_data[3:]   # 4th sample
+    total_samples = len(processed_data)
+    train_end = int(0.8 * len(processed_data))
+    valid_end = train_end + max(1, int(0.1 * len(processed_data)))
+
+    # Split data into 80% train, 10% valid, 10% test
+    train_data = processed_data[:train_end]
+    valid_data = processed_data[train_end:valid_end]
+    test_data = processed_data[valid_end:]
     
-    # Save to pickle files with your naming convention
-    split_files = {
+    # Save splits to pickle files
+    splits = {
         "train": train_data,
         "valid": valid_data,
         "test": test_data
     }
     
-    for split_name, data in split_files.items():
+    for split_name, data in splits.items():
         output_file = os.path.join(storage_path, f"{split_name}_data.pkl")
         with open(output_file, "wb") as f:
             pickle.dump(data, f)
