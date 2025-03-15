@@ -87,7 +87,11 @@ Although my model currently cannot evaluate properly due to training issues, thi
 
 ## Acknowledgements:
 * Open SLR for creating the librosa asr corpus: https://www.openslr.org/12
-* Hugging Face for their amazing tools and resources 
+* Hugging Face for their amazing tools and resources https://huggingface.co/datasets/openslr/librispeech_asr
 * Professor Jake Searcy
-* Chat GPT (open ai) and GROK (X ai) 
+* Chat GPT (open ai) and GROK (X ai)
+
+## Contact:
+* Izak Boardman
+* iboardma@uoregon.edu
 
