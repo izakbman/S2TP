@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 from jiwer import wer, cer
 import torch.nn.functional as F
 from tqdm import tqdm
-import matplotlib.pyplot as plt\
+import matplotlib.pyplot as plt
 
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
