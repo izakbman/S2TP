@@ -33,9 +33,9 @@ For this project, I manually created subsets of the validation split to tailor t
 
 ## Features
 
-data_utility.py: download and store librosa asr dataset from hugging face to librosa_cache directory
-model.py: train and evaluate my simpleCTCmodel and Wav2Vec from meta
-notebook.ipynb: cells to organize and run project code 
+* data_utility.py: download and store librosa asr dataset from hugging face to librosa_cache directory
+* model.py: train and evaluate my simpleCTCmodel and Wav2Vec from meta
+* notebook.ipynb: cells to organize and run project code 
 
 
 ## Usage 
