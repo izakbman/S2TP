@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from IPython.display import display, Audio as aud
 
+
 def get_storage_path(use_talapas=False, talapas_base="/home/iboardma/projdir/S2TP"):
     """Set the storage path based on whether Talapas is used."""
     if use_talapas:
