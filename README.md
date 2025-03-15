@@ -31,7 +31,7 @@ For this project, I manually created subsets of the validation split to tailor t
 
 !["Model Structure"](images/speech-recognition-1024x576.webp)
 
-## Features
+## Instructions and Features
 
 * data_utility.py: download and store librosa asr dataset from hugging face to librosa_cache directory
 * model.py: train and evaluate my simpleCTCmodel and Wav2Vec from meta
