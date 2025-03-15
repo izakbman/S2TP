@@ -1,6 +1,5 @@
 import os
 import torch
-from transformers import Wav2Vec2Processor, Wav2Vec2BertForCTC
 from datasets import load_dataset
 from torch.utils.data import Dataset, DataLoader
 import pickle
