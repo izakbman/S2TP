@@ -85,5 +85,9 @@ Despite the current setbacks, I see this project as a learning experience and a 
 ## Conclusion:
 Although my model currently cannot evaluate properly due to training issues, this project has sparked a deeper interest in the complexities of ASR. Moving forward, I will focus on improving data preprocessing, revising the model’s architecture, and leveraging powerful pre-trained models to continue exploring the ASR field. ASR is an evolving space with many challenges, but with continued research and refinement, I hope to contribute to this rapidly developing technology.
 
-
+## Acknowledgements:
+* Open SLR for creating the librosa asr corpus: https://www.openslr.org/12
+* Hugging Face for their amazing tools and resources 
+* Professor Jake Searcy
+* Chat GPT (open ai) and GROK (X ai) 
 
